@@ -138,7 +138,7 @@ def make_dataloader(paths: list[str], cfg: Config, shuffle: bool) -> DataLoader:
         batch_size=cfg.batch_size,
         shuffle=shuffle,
         collate_fn=collate_batch,
-        num_workers=2,
+        num_workers=0,
     )
 
 
@@ -149,25 +149,27 @@ def cosine_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return (1 - cos).mean()
 
 
-def evaluate(model: nn.Module, loaders: List[DataLoader], device: str, loss_fn):
+def evaluate(model: nn.Module, loader: DataLoader, device: str, loss_fn):
     model.eval()
     total_loss, total_cos, n = 0.0, 0.0, 0
     with torch.no_grad():
-        for loader in loaders:
-            for batch in loader:
-                x = batch["input_embs"].to(device)
-                attn = batch["attn_mask"].to(device)
-                seg = batch["seg_ids"].to(device)
-                y = batch["labels"].to(device)
-                y_hat = model(x, attn, seg)
-                loss = loss_fn(y_hat, y)
-                y_hat_n = nn.functional.normalize(y_hat, dim=-1)
-                y_n = nn.functional.normalize(y, dim=-1)
-                cos = (y_hat_n * y_n).sum(dim=-1).mean().item()
-                bsz = x.size(0)
-                total_loss += loss.item() * bsz
-                total_cos += cos * bsz
-                n += bsz
+        for batch in loader:
+            x = batch["input_embs"].to(device)
+            attn = batch["attn_mask"].to(device)
+            seg = batch["seg_ids"].to(device)
+            y = batch["labels"].to(device)
+            y_hat = model(x, attn, seg)
+            loss = loss_fn(y_hat, y)
+
+            # Cosine similarity
+            y_hat_n = nn.functional.normalize(y_hat, dim=-1)
+            y_n = nn.functional.normalize(y, dim=-1)
+            cos = (y_hat_n * y_n).sum(dim=-1).mean().item()
+
+            bsz = x.size(0)
+            total_loss += loss.item() * bsz
+            total_cos += cos * bsz
+            n += bsz
     return total_loss / n, total_cos / n
 
 
@@ -199,28 +201,21 @@ def train_loop(cfg: Config):
         model.train()
         running, seen = 0.0, 0
         # alternate batches from each loader
-        iters = [iter(loader) for loader in train_loaders]
-        while iters:
-            for i, it in enumerate(list(iters)):
-                try:
-                    batch = next(it)
-                except StopIteration:
-                    iters.remove(it)
-                    continue
-                x = batch["input_embs"].to(cfg.device)
-                attn = batch["attn_mask"].to(cfg.device)
-                seg = batch["seg_ids"].to(cfg.device)
-                y = batch["labels"].to(cfg.device)
-                y_hat = model(x, attn, seg)
-                loss = loss_fn(y_hat, y)
-                optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                if cfg.grad_clip is not None:
-                    nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
-                optimizer.step()
-                bsz = x.size(0)
-                running += loss.item() * bsz
-                seen += bsz
+        for batch in train_loaders:
+            x = batch["input_embs"].to(cfg.device)
+            attn = batch["attn_mask"].to(cfg.device)
+            seg = batch["seg_ids"].to(cfg.device)
+            y = batch["labels"].to(cfg.device)
+            y_hat = model(x, attn, seg)
+            loss = loss_fn(y_hat, y)
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            if cfg.grad_clip is not None:
+                nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
+            optimizer.step()
+            bsz = x.size(0)
+            running += loss.item() * bsz
+            seen += bsz
 
         train_loss = running / seen
         if valid_loaders:

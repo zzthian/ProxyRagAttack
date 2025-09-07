@@ -90,7 +90,7 @@ class JsonlDataset(Dataset):
             np.array(seq), dtype=torch.float
         )  # dim: (seq_len, emb_dim)
         seg_ids = torch.tensor(seg_ids, dtype=torch.long)
-        attn_mask = torch.ones(len(seq), dtype=torch.long)  # all real, no pad yet
+        attn_mask = torch.ones(len(seq), dtype=torch.bool)  # all real, no pad yet
         labels = torch.tensor(target_query, dtype=torch.float)
 
         return {
@@ -119,7 +119,7 @@ def collate_batch(batch: List[Tuple[np.ndarray, np.ndarray]]):
         padded_embs[:seq_len] = item["input_embs"]
 
         # Pad masks
-        padded_mask = torch.zeros(max_len, dtype=torch.long)
+        padded_mask = torch.zeros(max_len, dtype=torch.bool)
         padded_mask[:seq_len] = item["attn_mask"]
 
         # Pad seg_ids
