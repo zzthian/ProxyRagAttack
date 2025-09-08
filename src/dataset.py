@@ -5,53 +5,49 @@ import json
 from torch.utils.data import Dataset
 from sentence_transformers import (
     SentenceTransformer,
-)  # To be changed with our chosen sentence transformer
+)
 
 """
 JsonlDataset class used to format datasets and prepare for training
 """
+# TODO each training loop uses a different dataset, in this case might want to use different dataloader per dataset
 
 
 class JsonlDataset(Dataset):
-    def __init__(self, paths, cfg, encoder=None):
+    def __init__(self, path, cfg, encoder=None):
         self.data = []
-        self.conversations = []
+        self.conversation = []
         self.cfg = cfg
-        self.max_seq_length = 0
         self.encoder = encoder or SentenceTransformer("all-mpnet-base-v2")
-        for path in paths:
-            with open(path) as f:
-                currConvo = []
-                with open(path, "r") as f:
-                    text = f.read()
-                    decoder = json.JSONDecoder()
-                    pos = 0
-                    length = len(text)
-                while pos < length:
-                    # Skip any whitespace/newlines before the next JSON object
-                    while pos < length and text[pos].isspace():
-                        pos += 1
-                    if pos >= length:
-                        break
+        with open(path) as f:
+            with open(path, "r") as f:
+                text = f.read()
+                decoder = json.JSONDecoder()
+                pos = 0
+                length = len(text)
+            while pos < length:
+                # Skip any whitespace/newlines before the next JSON object
+                while pos < length and text[pos].isspace():
+                    pos += 1
+                if pos >= length:
+                    break
 
-                    # Decode the next JSON object
-                    obj, idx = decoder.raw_decode(text[pos:])
-                    if "question" not in obj:
-                        break
-                    else:
-                        question = obj["question"]
-                        retrievals = obj["retrieval"]
+                # Decode the next JSON object
+                obj, idx = decoder.raw_decode(text[pos:])
+                if "question" not in obj:
+                    break
+                else:
+                    question = obj["question"]
+                    retrievals = obj["retrieval"]
 
-                        # Encode question + doc
-                        q_emb = self.encoder.encode(question)
-                        d_embs = self.encoder.encode(retrievals[0])
-                        # Each entry now has question embedding and doc embeddings
-                        currConvo.append((q_emb, d_embs))
+                    # Encode question + doc
+                    q_emb = self.encoder.encode(question)
+                    d_embs = self.encoder.encode(retrievals[0])
+                    # Each entry now has question embedding and doc embeddings
+                    self.conversation.append((q_emb, d_embs))
 
-                    # Move the position forward
-                    pos += idx
-
-            self.conversations.append(currConvo)
+                # Move the position forward
+                pos += idx
         self._build_examples()
 
     def _build_examples(self):
@@ -60,17 +56,15 @@ class JsonlDataset(Dataset):
           input = [q_0, ..., q_{n-1}] + [d_{n-1}]
           target = q_n
         """
-        for conversation in self.conversations:
-            convoLength = len(conversation)
-            self.max_seq_length = max(convoLength, self.max_seq_length)
-            print(f"Max convo length: {self.max_seq_length}")
-
-            for i in range(1, convoLength):
-                prev_queries = [conversation[k][0] for k in range(i)]
-                prev_doc = conversation[i - 1][1]
-                target_query = conversation[i][0]
-            example = {"queries": prev_queries, "doc": prev_doc, "target": target_query}
-            self.data.append(example)
+        convoLength = len(self.conversation)
+        print(f"Convo length: {convoLength}")
+        conversation = self.conversation
+        for i in range(1, convoLength):
+            prev_queries = [conversation[k][0] for k in range(i)]
+            prev_doc = conversation[i - 1][1]
+            target_query = conversation[i][0]
+        example = {"queries": prev_queries, "doc": prev_doc, "target": target_query}
+        self.data.append(example)
 
     def __len__(self):
 
